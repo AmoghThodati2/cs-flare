@@ -1,41 +1,118 @@
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'photoScreen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(MyApp());
-}
+  WidgetsFlutterBinding.ensureInitialized();
 
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
+  final cameras = await availableCameras();
+  final firstCamera = cameras.first;
+  runApp(
+    MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'cs-flare',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSwatch(primarySwatch: Colors.red),
       ),
-      home: HomePage(),
-    );
-  }
+      home: TakePictureScreen(
+        camera: firstCamera,
+      ),
+    ),
+  );
 }
 
-class HomePage extends StatefulWidget {
+class TakePictureScreen extends StatefulWidget {
+  const TakePictureScreen({
+    super.key,
+    required this.camera,
+  });
+
+  final CameraDescription camera;
+
   @override
-  _HomePageState createState() => _HomePageState();
+  TakePictureScreenState createState() => TakePictureScreenState();
 }
 
-class _HomePageState extends State<HomePage> {
+class TakePictureScreenState extends State<TakePictureScreen> {
+  late CameraController _controller;
+  late Future<void> _initializeControllerFuture;
   final ImagePicker _picker = ImagePicker();
-  File? _image;
+  List<File> _images = [];
 
-  Future<void> _pickImage(ImageSource source) async {
-    final XFile? pickedFile = await _picker.pickImage(source: source);
-    if (pickedFile != null) {
+  @override
+  void initState() {
+    super.initState();
+    _controller = CameraController(
+      widget.camera,
+      ResolutionPreset.medium,
+    );
+
+    _initializeControllerFuture = _controller.initialize();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _takePictureInOrientation(DeviceOrientation orientation) async {
+    await SystemChrome.setPreferredOrientations([orientation]);
+    await Future.delayed(Duration(milliseconds: 500)); // Small delay to ensure orientation is set
+    final image = await _controller.takePicture();
+    _images.add(File(image.path));
+  }
+
+  Future<void> _takePictures() async {
+    try {
+      await _initializeControllerFuture;
+
+      await _takePictureInOrientation(DeviceOrientation.portraitUp);
+      await _takePictureInOrientation(DeviceOrientation.portraitDown);
+      await _takePictureInOrientation(DeviceOrientation.landscapeLeft);
+      await _takePictureInOrientation(DeviceOrientation.landscapeRight);
+
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight
+      ]);
+
+      if (!context.mounted) return;
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => ComplicatedImageDemo(images: _images),
+        ),
+      );
+    } catch (e) {
+      print(e);
+    }
+  }
+
+  Future<void> _pickImages() async {
+    final List<XFile>? pickedFiles = await _picker.pickMultiImage();
+    if (pickedFiles != null && pickedFiles.length == 6) {
       setState(() {
-        _image = File(pickedFile.path);
+        _images = pickedFiles.map((pickedFile) => File(pickedFile.path)).toList();
       });
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => ComplicatedImageDemo(images: _images),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Please select exactly 6 images.'),
+        ),
+      );
     }
   }
 
@@ -45,7 +122,7 @@ class _HomePageState extends State<HomePage> {
       appBar: PreferredSize(
         preferredSize: Size.fromHeight(50.0), // Set the height you want
         child: AppBar(
-          title: Text('Welcome to CS-Flare!'),
+          title: Text('Welcome to CS-FLARE!'),
           backgroundColor: Color(0xFFF69E04),
         ),
       ),
@@ -62,9 +139,17 @@ class _HomePageState extends State<HomePage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
               ElevatedButton(
-                onPressed: () {
-                  _pickImage(ImageSource.gallery); // Pick image from gallery
-                },
+                onPressed: _takePictures,
+                style: ElevatedButton.styleFrom(
+                  shape: CircleBorder(),
+                  padding: EdgeInsets.all(90), // Adjust the padding to control the button size
+                  backgroundColor: Colors.black,
+                ),
+                child: const Icon(Icons.camera_alt),
+              ),
+              SizedBox(height: 50),
+              ElevatedButton(
+                onPressed: _pickImages,
                 style: ElevatedButton.styleFrom(
                   shape: CircleBorder(),
                   padding: EdgeInsets.all(90), // Adjust the padding to control the button size
@@ -80,30 +165,6 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-              SizedBox(height: 50),
-              ElevatedButton(
-                onPressed: () {
-                  _pickImage(ImageSource.camera); // Take photo from camera
-                },
-                style: ElevatedButton.styleFrom(
-                  shape: CircleBorder(),
-                  padding: EdgeInsets.all(90), // Adjust the padding to control the button size
-                  backgroundColor: Colors.black,
-                ),
-                child: Text(
-                  'Take Photos',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 30.0,
-                    color: Colors.redAccent,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              if (_image != null) ...[
-                SizedBox(height: 30),
-                Image.file(_image!),
-              ]
             ],
           ),
         ),
@@ -111,4 +172,21 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
+class DisplayPictureScreen extends StatelessWidget {
+  final String imagePath;
+
+  const DisplayPictureScreen({super.key, required this.imagePath});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Display the Picture')),
+      body: Image.file(File(imagePath)),
+    );
+  }
+}
+
+
+
 
