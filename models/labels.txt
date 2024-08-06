@@ -1,0 +1,3 @@
+0 Healthy
+1 Slightly Dry
+2 Very Dry
